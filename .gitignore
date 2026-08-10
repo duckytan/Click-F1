@@ -1,0 +1,18 @@
+# === 构建产物 ===
+build/
+dist/
+*.spec
+
+# === 目标程序（需自备，勿上传第三方打包 exe）===
+Click.exe
+
+# === 逆向分析过程中的临时脚本（非交付物）===
+*.py
+
+# === 本地杂项 ===
+123.txt
+Thumbs.db
+ehthumbs.db
+
+# === WorkBuddy 内部目录 ===
+.workbuddy/
