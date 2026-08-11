@@ -308,7 +308,7 @@ class Launcher
             tray.ContextMenu = cm;
             tray.Visible = true;
 
-            Timer aliveTimer = new Timer();
+            System.Windows.Forms.Timer aliveTimer = new System.Windows.Forms.Timer();
             aliveTimer.Interval = 1000;
             aliveTimer.Tick += (s, e) =>
             {
