@@ -87,6 +87,7 @@ class Launcher
 
     static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+    static readonly IntPtr HWND_TOP = new IntPtr(0);
     const uint SWP_NOMOVE = 0x0002;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOACTIVATE = 0x0010;
@@ -94,6 +95,8 @@ class Launcher
     const uint SWP_NOZORDER = 0x0004;
     const uint WS_VISIBLE = 0x10000000;
     const uint WS_CHILD = 0x40000000;
+    const uint WS_BORDER = 0x00800000;
+    const uint WS_CLIPSIBLINGS = 0x04000000;
     const uint BS_AUTOCHECKBOX = 0x0003;
     const uint BM_GETCHECK = 0x00F0;
     const uint BM_SETCHECK = 0x00F1;
@@ -110,6 +113,16 @@ class Launcher
     static void Alert(string text)
     {
         MessageBox.Show(text, "Clicker F1", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    static void Log(string text)
+    {
+        try
+        {
+            string path = Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "Clicker-F1.log");
+            File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss.fff ") + text + Environment.NewLine);
+        }
+        catch { }
     }
 
     static bool FindClickWindow(int pid, out IntPtr mainHwnd, out IntPtr statusHwnd)
@@ -324,27 +337,38 @@ class Launcher
         {
             if (!IsWindow(clickHwnd)) return;
             RECT cr; GetClientRect(clickHwnd, out cr);
-            RECT sr = new RECT(); bool hasStatus = false;
+            int h = 26;
+            int w = 100;
+            int x = cr.right - w - 8;
+            int y = cr.bottom - h - 8;
+
             if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
             {
-                GetWindowRect(statusHwnd, out sr);
-                hasStatus = true;
+                RECT sr; GetWindowRect(statusHwnd, out sr);
+                POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
+                ScreenToClient(clickHwnd, ref sp);
+                y = sp.y - h - 4;
+                Log(string.Format("statusbar screen=({0},{1},{2}x{3}) client-top={4}", sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top, sp.y));
             }
-            int h = 22;
-            int w = 90;
-            int x = cr.right - w - 8;
-            int y = hasStatus ? (sr.top - cr.top - h - 4) : (cr.bottom - h - 8);
             if (x < 4) x = 4;
             if (y < 4) y = 4;
 
+            Log(string.Format("client={0}x{1} create checkbox at ({2},{3}) size {4}x{5}", cr.right, cr.bottom, x, y, w, h));
             IntPtr hInstance = GetModuleHandleW(null);
             checkHwnd = CreateWindowExW(0, "BUTTON", "窗口置顶",
-                                        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
                                         x, y, w, h, clickHwnd, IntPtr.Zero, hInstance, IntPtr.Zero);
+            int err = Marshal.GetLastWin32Error();
+            Log(string.Format("checkbox hwnd={0:X} lastErr={1}", checkHwnd.ToInt64(), err));
             if (checkHwnd != IntPtr.Zero)
             {
+                SetWindowPos(checkHwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
                 SendMessageW(checkHwnd, BM_SETCHECK, 0, 0);
                 lastChecked = false;
+            }
+            else
+            {
+                Alert("CreateWindowEx for checkbox failed (lastErr=" + err + ").");
             }
         }
 
@@ -352,20 +376,21 @@ class Launcher
         {
             if (!IsWindow(clickHwnd) || !IsWindow(checkHwnd)) return;
             RECT cr; GetClientRect(clickHwnd, out cr);
-            RECT sr = new RECT(); bool hasStatus = false;
+            int h = 26;
+            int w = 100;
+            int x = cr.right - w - 8;
+            int y = cr.bottom - h - 8;
             if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
             {
-                GetWindowRect(statusHwnd, out sr);
-                hasStatus = true;
+                RECT sr; GetWindowRect(statusHwnd, out sr);
+                POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
+                ScreenToClient(clickHwnd, ref sp);
+                y = sp.y - h - 4;
             }
-            int h = 22;
-            int w = 90;
-            int x = cr.right - w - 8;
-            int y = hasStatus ? (sr.top - cr.top - h - 4) : (cr.bottom - h - 8);
             if (x < 4) x = 4;
             if (y < 4) y = 4;
-            SetWindowPos(checkHwnd, IntPtr.Zero, x, y, w, h,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(checkHwnd, HWND_TOP, x, y, w, h,
+                         SWP_NOACTIVATE);
         }
 
         void ExitAll()
