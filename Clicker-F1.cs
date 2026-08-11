@@ -333,81 +333,24 @@ class Launcher
             }
         }
 
-        int ComputeCheckBoxY(int h)
+        void GetCheckBoxPos(out int x, out int y, out int w, out int h)
         {
-            if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
-            {
-                RECT sr; GetWindowRect(statusHwnd, out sr);
-                POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
-                ScreenToClient(clickHwnd, ref sp);
-                Log(string.Format("statusbar screen=({0},{1},{2}x{3}) client-top={4}", sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top, sp.y));
-                return sp.y - h - 4;
-            }
+            w = 70; h = 20;
             RECT cr; GetClientRect(clickHwnd, out cr);
-            return cr.bottom - h - 8;
-        }
-
-        int ComputeCheckBoxX(int w, int y, int h)
-        {
-            RECT cr; GetClientRect(clickHwnd, out cr);
-            int preferredRight = cr.right - 8;
-            int x = preferredRight - w;
-
-            // scan bottom-row siblings so we don't overlap "按键：" / "类型：" etc.
-            int rightEdge = 0;
-            int statusTop = int.MaxValue;
-            if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
-            {
-                RECT sr; GetWindowRect(statusHwnd, out sr);
-                POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
-                ScreenToClient(clickHwnd, ref sp);
-                statusTop = sp.y;
-            }
-
-            EnumChildWindows(clickHwnd, (ch, lp) =>
-            {
-                if (ch == checkHwnd) return true;
-                if (ch == statusHwnd) return true;
-                if (!IsWindowVisible(ch)) return true;
-                RECT rc; GetWindowRect(ch, out rc);
-                POINT tl = new POINT(); tl.x = rc.left; tl.y = rc.top;
-                POINT br = new POINT(); br.x = rc.right; br.y = rc.bottom;
-                ScreenToClient(clickHwnd, ref tl);
-                ScreenToClient(clickHwnd, ref br);
-                bool inBottomRow = (tl.y >= y - 8 && br.y <= statusTop + 8);
-                Log(string.Format("sibling hwnd={0:X} class={1} rc=({2},{3},{4},{5}) inBottomRow={6}",
-                    ch.ToInt64(), GetClassName(ch), tl.x, tl.y, br.x, br.y, inBottomRow));
-                if (inBottomRow && br.x > rightEdge) rightEdge = br.x;
-                return true;
-            }, IntPtr.Zero);
-
-            if (rightEdge > 0 && rightEdge + 8 + w <= preferredRight)
-                x = rightEdge + 8;
-            else if (rightEdge > 0 && preferredRight - rightEdge < w + 16)
-                x = preferredRight - w; // fallback: right-align even if overlap risk
-
+            x = cr.right - w - 8;
+            y = 4;
             if (x < 4) x = 4;
-            return x;
-        }
-
-        string GetClassName(IntPtr hwnd)
-        {
-            StringBuilder sb = new StringBuilder(256);
-            GetClassNameW(hwnd, sb, 256);
-            return sb.ToString();
         }
 
         void CreateCheckBox()
         {
             if (!IsWindow(clickHwnd)) return;
-            int h = 26;
-            int w = 100;
-            int y = ComputeCheckBoxY(h);
-            int x = ComputeCheckBoxX(w, y, h);
+            int x, y, w, h;
+            GetCheckBoxPos(out x, out y, out w, out h);
 
             Log(string.Format("create checkbox at ({0},{1}) size {2}x{3}", x, y, w, h));
             IntPtr hInstance = GetModuleHandleW(null);
-            checkHwnd = CreateWindowExW(0, "BUTTON", "窗口置顶",
+            checkHwnd = CreateWindowExW(0, "BUTTON", "置顶",
                                         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
                                         x, y, w, h, clickHwnd, IntPtr.Zero, hInstance, IntPtr.Zero);
             int err = Marshal.GetLastWin32Error();
@@ -427,10 +370,8 @@ class Launcher
         void RepositionCheckBox()
         {
             if (!IsWindow(clickHwnd) || !IsWindow(checkHwnd)) return;
-            int h = 26;
-            int w = 100;
-            int y = ComputeCheckBoxY(h);
-            int x = ComputeCheckBoxX(w, y, h);
+            int x, y, w, h;
+            GetCheckBoxPos(out x, out y, out w, out h);
             SetWindowPos(checkHwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
         }
 
