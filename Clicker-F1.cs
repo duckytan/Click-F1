@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
@@ -47,13 +46,9 @@ class Launcher
     [DllImport("user32")]
     static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, int w, int l);
     [DllImport("user32")]
-    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("user32")]
     static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32")]
     static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32")]
-    static extern IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string lpszClass, string lpszWindow);
     [DllImport("user32")]
     static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
     [DllImport("user32")]
@@ -66,6 +61,16 @@ class Launcher
     static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32")]
     static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32", CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateWindowExW(uint dwExStyle, string lpClassName, string lpWindowName,
+                                         uint dwStyle, int X, int Y, int nWidth, int nHeight,
+                                         IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+    [DllImport("kernel32")]
+    static extern IntPtr GetModuleHandleW(string lpModuleName);
+    [DllImport("user32")]
+    static extern bool DestroyWindow(IntPtr hWnd);
+    [DllImport("user32")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
     delegate bool EnumWin(IntPtr hwnd, IntPtr lp);
 
@@ -87,10 +92,13 @@ class Launcher
     const uint SWP_NOACTIVATE = 0x0010;
     const uint SWP_FRAMECHANGED = 0x0020;
     const uint SWP_NOZORDER = 0x0004;
-
-    const int WS_CHILD = 0x40000000;
-    const int WS_CLIPCHILDREN = 0x02000000;
+    const uint WS_VISIBLE = 0x10000000;
+    const uint WS_CHILD = 0x40000000;
+    const uint BS_AUTOCHECKBOX = 0x0003;
+    const uint BM_GETCHECK = 0x00F0;
+    const uint BM_SETCHECK = 0x00F1;
     const int GWL_STYLE = -16;
+    const int WS_CLIPCHILDREN = 0x02000000;
     const int EM_GETLIMITTEXT = 0x00BA;
     const int EM_SETLIMITTEXT = 0x00C5;
 
@@ -254,114 +262,132 @@ class Launcher
 
         CloseHandle(hp);
 
-        Application.Run(new EmbeddedToggle(p, mainHwnd, statusHwnd));
+        Application.Run(new AppContext(p, mainHwnd, statusHwnd));
     }
 
-    class EmbeddedToggle : Form
+    class AppContext : ApplicationContext
     {
         Process clickProc;
         IntPtr clickHwnd;
-        IntPtr statusHwnd = IntPtr.Zero;
+        IntPtr statusHwnd;
+        IntPtr checkHwnd = IntPtr.Zero;
         NotifyIcon tray;
-        CheckBox cb;
-        System.Windows.Forms.Timer aliveTimer;
+        System.Windows.Forms.Timer timer;
+        bool lastChecked = false;
 
-        public EmbeddedToggle(Process proc, IntPtr hwnd, IntPtr statusHwnd)
+        public AppContext(Process proc, IntPtr hwnd, IntPtr status)
         {
             clickProc = proc;
             clickHwnd = hwnd;
-            this.statusHwnd = statusHwnd;
-
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            StartPosition = FormStartPosition.Manual;
-            BackColor = SystemColors.Control;
-            TopMost = false;
-
-            cb = new CheckBox();
-            cb.Text = "窗口置顶";
-            cb.AutoSize = true;
-            cb.Font = new Font("Microsoft YaHei UI", 9f);
-            cb.BackColor = SystemColors.Control;
-            cb.ForeColor = SystemColors.ControlText;
-            cb.Location = new Point(4, 2);
-            cb.CheckedChanged += (s, e) => SetClickTopmost(cb.Checked);
-            Controls.Add(cb);
-
-            this.ClientSize = new Size(cb.Width + 10, cb.Height + 6);
+            statusHwnd = status;
 
             tray = new NotifyIcon();
             tray.Icon = SystemIcons.Application;
-            tray.Text = "Clicker F1" + (hwnd == IntPtr.Zero ? " (独立)" : "");
+            tray.Text = "Clicker F1";
             ContextMenu cm = new ContextMenu();
             cm.MenuItems.Add("退出", (s, e) => ExitAll());
             tray.ContextMenu = cm;
             tray.Visible = true;
 
-            aliveTimer = new System.Windows.Forms.Timer();
-            aliveTimer.Interval = 1000;
-            aliveTimer.Tick += (s, e) =>
-            {
-                try { if (clickProc != null && clickProc.HasExited) Application.Exit(); }
-                catch { Application.Exit(); }
-            };
-            aliveTimer.Start();
+            timer = new System.Windows.Forms.Timer();
+            timer.Interval = 200;
+            timer.Tick += (s, e) => Tick();
+            timer.Start();
         }
 
-        protected override CreateParams CreateParams
+        void Tick()
         {
-            get
-            {
-                CreateParams cp = base.CreateParams;
-                cp.Style |= WS_CHILD;
-                if (clickHwnd != IntPtr.Zero) cp.Parent = clickHwnd;
-                return cp;
-            }
-        }
+            try { if (clickProc != null && clickProc.HasExited) ExitApp(); }
+            catch { ExitApp(); }
 
-        protected override void OnHandleCreated(EventArgs e)
-        {
-            base.OnHandleCreated(e);
-            if (clickHwnd != IntPtr.Zero)
+            if (!IsWindow(clickHwnd)) { ExitApp(); return; }
+
+            if (!IsWindow(checkHwnd))
             {
-                RECT cr; GetClientRect(clickHwnd, out cr);
-                int x = cr.right - this.Width - 10;
-                int y = cr.bottom - this.Height - 8;
-                if (statusHwnd != IntPtr.Zero)
-                {
-                    RECT sr; GetWindowRect(statusHwnd, out sr);
-                    POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
-                    ScreenToClient(clickHwnd, ref sp);
-                    y = sp.y - this.Height - 4;
-                }
-                if (x < 4) x = 4;
-                if (y < 4) y = 4;
-                this.Location = new Point(x, y);
-                this.Visible = true;
+                CreateCheckBox();
+                lastChecked = false;
             }
             else
             {
-                this.Location = new Point(Screen.PrimaryScreen.WorkingArea.Right - this.Width - 20, Screen.PrimaryScreen.WorkingArea.Bottom - this.Height - 20);
-                this.Visible = true;
+                RepositionCheckBox();
+                bool chk = (int)SendMessageW(checkHwnd, BM_GETCHECK, 0, 0) == 1;
+                if (chk != lastChecked)
+                {
+                    lastChecked = chk;
+                    SetWindowPos(clickHwnd, chk ? HWND_TOPMOST : HWND_NOTOPMOST,
+                                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
             }
         }
 
-        void SetClickTopmost(bool top)
+        void CreateCheckBox()
         {
-            if (clickHwnd != IntPtr.Zero && IsWindow(clickHwnd))
-                SetWindowPos(clickHwnd, top ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            if (!IsWindow(clickHwnd)) return;
+            RECT cr; GetClientRect(clickHwnd, out cr);
+            RECT sr = new RECT(); bool hasStatus = false;
+            if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
+            {
+                GetWindowRect(statusHwnd, out sr);
+                hasStatus = true;
+            }
+            int h = 22;
+            int w = 90;
+            int x = cr.right - w - 8;
+            int y = hasStatus ? (sr.top - cr.top - h - 4) : (cr.bottom - h - 8);
+            if (x < 4) x = 4;
+            if (y < 4) y = 4;
+
+            IntPtr hInstance = GetModuleHandleW(null);
+            checkHwnd = CreateWindowExW(0, "BUTTON", "窗口置顶",
+                                        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                        x, y, w, h, clickHwnd, IntPtr.Zero, hInstance, IntPtr.Zero);
+            if (checkHwnd != IntPtr.Zero)
+            {
+                SendMessageW(checkHwnd, BM_SETCHECK, 0, 0);
+                lastChecked = false;
+            }
+        }
+
+        void RepositionCheckBox()
+        {
+            if (!IsWindow(clickHwnd) || !IsWindow(checkHwnd)) return;
+            RECT cr; GetClientRect(clickHwnd, out cr);
+            RECT sr = new RECT(); bool hasStatus = false;
+            if (statusHwnd != IntPtr.Zero && IsWindow(statusHwnd))
+            {
+                GetWindowRect(statusHwnd, out sr);
+                hasStatus = true;
+            }
+            int h = 22;
+            int w = 90;
+            int x = cr.right - w - 8;
+            int y = hasStatus ? (sr.top - cr.top - h - 4) : (cr.bottom - h - 8);
+            if (x < 4) x = 4;
+            if (y < 4) y = 4;
+            SetWindowPos(checkHwnd, IntPtr.Zero, x, y, w, h,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
         }
 
         void ExitAll()
         {
             try { if (clickProc != null && !clickProc.HasExited) clickProc.Kill(); } catch { }
+            ExitApp();
+        }
+
+        void ExitApp()
+        {
+            try { timer.Stop(); } catch { }
+            if (checkHwnd != IntPtr.Zero && IsWindow(checkHwnd)) DestroyWindow(checkHwnd);
+            tray.Visible = false;
+            tray.Dispose();
             Application.Exit();
         }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
+        protected override void Dispose(bool disposing)
         {
-            base.OnFormClosing(e);
-            if (tray != null) tray.Dispose();
+            try { if (checkHwnd != IntPtr.Zero && IsWindow(checkHwnd)) DestroyWindow(checkHwnd); }
+            catch { }
+            base.Dispose(disposing);
         }
     }
 }

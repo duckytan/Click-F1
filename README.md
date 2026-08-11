@@ -19,7 +19,7 @@
 2. 在内存里把热键立即数 `VK_F2`(`0x71`) → `VK_F1`(`0x70`)，位置 **VA `0x401037`**；
 3. 把内存中两份“按F2”字符串常量里的 `2` 改成 `1`（双保险）；
 4. 用 `WM_SETTEXT` 把状态栏控件（`msctls_statusbar32`）**正在显示**的文本 F2→F1；
-5. 用 `SetParent` + `WS_CHILD` 把一个无边框小窗（内嵌「窗口置顶」勾选框）直接挂到 `Click.exe` 主窗口底部右侧，成为它的子控件；并对原窗口设 `WS_CLIPCHILDREN`，防止它重绘时盖掉这个勾选框；
+5. 用 `CreateWindowEx` 创建一个原生 `BS_AUTOCHECKBOX` 勾选框，通过 `SetParent` 直接挂到 `Click.exe` 主窗口底部右侧成为子控件；并对原窗口设 `WS_CLIPCHILDREN`，防止它重绘时盖掉这个勾选框；
 6. 遍历原窗口里的 `Edit` 控件，把数字上限（`EM_GETLIMITTEXT`）为 6 的输入框通过 `EM_SETLIMITTEXT` 放宽到 12。
 
 启动器只在后台驻留（托盘图标可退出），**不再有额外的浮动面板**；勾选框就长在原窗口里，点一下即可切换置顶。
@@ -32,7 +32,7 @@
 |------|------|
 | `Clicker-F1.cs` | 启动器源码（C#，原生 winexe） |
 | `build.bat` | 一键调用系统自带 `csc` 编译出 `Clicker-F1.exe` |
-| `Clicker-F1.exe` | 编译好的启动器（约 9KB，已包含在仓库） |
+| `Clicker-F1.exe` | 编译好的启动器（约 9KB，由 `build.bat` 生成本地副本，不再提交到仓库） |
 | `Clicker-F1.ps1` | PowerShell 版兜底（仅热键+状态栏，免编译；不含置顶勾选框注入/输入框放宽） |
 | `Clicker-F1.vbs` | 双击即用，调用上面的 ps1 |
 
@@ -41,13 +41,10 @@
 ## 使用方法
 
 **方式一（推荐，得到真·小 exe）：**
-1. 把本仓库的 `Clicker-F1.exe`（或源码）和你的 **`Click.exe`** 放在**同一目录**；
-2. **双击 `Clicker-F1.exe`** 启动，稍后 `Click.exe` 窗口底部右侧会出现一个「窗口置顶」勾选框；
-3. 勾上它，`Click.exe` 窗口即置顶；取消勾选则取消置顶（勾选框就嵌在原窗口里，不是独立浮窗）。
-
-**想自己编译：**
-1. 双击 `build.bat`（调用 Windows 自带的 `csc.exe`，无需安装环境）；
-2. 生成的 `Clicker-F1.exe` 会覆盖旧的。
+1. 把源码和你的 **`Click.exe`** 放在**同一目录**；
+2. **双击 `build.bat`**（调用 Windows 自带的 `csc.exe`，无需安装环境），生成 `Clicker-F1.exe`；
+3. **双击 `Clicker-F1.exe`** 启动，稍后 `Click.exe` 窗口底部右侧会出现一个「窗口置顶」勾选框；
+4. 勾上它，`Click.exe` 窗口即置顶；取消勾选则取消置顶（勾选框就嵌在原窗口里，不是独立浮窗）。
 
 **方式二（免编译，立刻能用）：**
 - 直接双击 `Clicker-F1.vbs`，用系统 PowerShell 跑同款逻辑。
