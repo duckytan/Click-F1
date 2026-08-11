@@ -2,6 +2,8 @@
 build/
 dist/
 *.spec
+# 由 build.bat 调用系统 csc 现场生成，不纳入版本库（需本机编译）
+Clicker-F1.exe
 
 # === 目标程序（需自备，勿上传第三方打包 exe）===
 Click.exe

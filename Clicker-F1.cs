@@ -45,17 +45,27 @@ class Launcher
     [DllImport("user32", CharSet = CharSet.Unicode)]
     static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, [MarshalAs(UnmanagedType.LPWStr)] string l);
     [DllImport("user32")]
+    static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, int w, int l);
+    [DllImport("user32")]
     static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32")]
     static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32")]
+    static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32")]
+    static extern IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string lpszClass, string lpszWindow);
+    [DllImport("user32")]
+    static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+    [DllImport("user32")]
+    static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    [DllImport("user32")]
+    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    [DllImport("user32")]
+    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    [DllImport("user32")]
     static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32")]
     static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32")]
-    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32")]
-    static extern bool SetForegroundWindow(IntPtr hWnd);
 
     delegate bool EnumWin(IntPtr hwnd, IntPtr lp);
 
@@ -75,8 +85,19 @@ class Launcher
     const uint SWP_NOMOVE = 0x0002;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOACTIVATE = 0x0010;
+    const uint SWP_FRAMECHANGED = 0x0020;
+    const uint SWP_NOZORDER = 0x0004;
+
+    const int WS_CHILD = 0x40000000;
+    const int WS_CLIPCHILDREN = 0x02000000;
+    const int GWL_STYLE = -16;
+    const int EM_GETLIMITTEXT = 0x00BA;
+    const int EM_SETLIMITTEXT = 0x00C5;
 
     struct RECT { public int left, top, right, bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT { public int x; public int y; }
 
     static void Alert(string text)
     {
@@ -89,7 +110,7 @@ class Launcher
         statusHwnd = IntPtr.Zero;
         IntPtr foundMain = IntPtr.Zero;
         IntPtr foundStatus = IntPtr.Zero;
-        bool ok = EnumWindows((hwnd, lp) =>
+        EnumWindows((hwnd, lp) =>
         {
             uint p = 0;
             GetWindowThreadProcessId(hwnd, out p);
@@ -210,165 +231,118 @@ class Launcher
                 SendMessageW(statusHwnd, 0x000C, IntPtr.Zero, txt.Replace("F2", "F1"));
         }
 
+        if (mainHwnd != IntPtr.Zero)
+        {
+            // prevent Click.exe from erasing our embedded control on repaint
+            int st = GetWindowLong(mainHwnd, GWL_STYLE);
+            SetWindowLong(mainHwnd, GWL_STYLE, st | WS_CLIPCHILDREN);
+            SetWindowPos(mainHwnd, IntPtr.Zero, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+
+            // lift the bottom numeric input limit 6 -> 12
+            EnumChildWindows(mainHwnd, (hwnd, lp) =>
+            {
+                StringBuilder cs = new StringBuilder(256);
+                GetClassNameW(hwnd, cs, 256);
+                if (cs.ToString() == "Edit")
+                {
+                    int lim = (int)SendMessageW(hwnd, EM_GETLIMITTEXT, 0, 0);
+                    if (lim > 0 && lim < 12) SendMessageW(hwnd, EM_SETLIMITTEXT, 12, 0);
+                }
+                return true;
+            }, IntPtr.Zero);
+        }
+
         CloseHandle(hp);
 
-        Application.Run(new ControlPanel(p, mainHwnd));
+        Application.Run(new EmbeddedToggle(p, mainHwnd, statusHwnd));
     }
 
-    class ControlPanel : Form
+    class EmbeddedToggle : Form
     {
         Process clickProc;
         IntPtr clickHwnd;
-        bool isTopmost = false;
-        bool dragging = false;
-        Point dragStart;
-        ToggleSwitch toggle;
+        IntPtr statusHwnd = IntPtr.Zero;
         NotifyIcon tray;
+        CheckBox cb;
+        System.Windows.Forms.Timer aliveTimer;
 
-        public ControlPanel(Process proc, IntPtr hwnd)
+        public EmbeddedToggle(Process proc, IntPtr hwnd, IntPtr statusHwnd)
         {
             clickProc = proc;
             clickHwnd = hwnd;
-            InitializeComponent();
-            PositionByClickWindow();
-        }
+            this.statusHwnd = statusHwnd;
 
-        void InitializeComponent()
-        {
-            this.Text = "Clicker F1";
-            this.FormBorderStyle = FormBorderStyle.None;
-            this.StartPosition = FormStartPosition.Manual;
-            this.Size = new Size(200, 120);
-            this.BackColor = Color.FromArgb(30, 32, 40);
-            this.Opacity = 0.98;
-            this.ShowInTaskbar = false;
-            this.DoubleBuffered = true;
-            this.Font = new Font("Microsoft YaHei UI", 9f);
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = SystemColors.Control;
+            TopMost = false;
 
-            RoundRegion(16);
+            cb = new CheckBox();
+            cb.Text = "窗口置顶";
+            cb.AutoSize = true;
+            cb.Font = new Font("Microsoft YaHei UI", 9f);
+            cb.BackColor = SystemColors.Control;
+            cb.ForeColor = SystemColors.ControlText;
+            cb.Location = new Point(4, 2);
+            cb.CheckedChanged += (s, e) => SetClickTopmost(cb.Checked);
+            Controls.Add(cb);
 
-            Label title = new Label
-            {
-                Text = "Clicker F1",
-                ForeColor = Color.White,
-                AutoSize = true,
-                Location = new Point(14, 10),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold)
-            };
-            this.Controls.Add(title);
-
-            Label btnMin = CreateTopButton("\u2212", () => HideToTray());
-            btnMin.Location = new Point(this.Width - 52, 8);
-            this.Controls.Add(btnMin);
-
-            Label btnClose = CreateTopButton("\u00D7", () => ExitAll());
-            btnClose.Location = new Point(this.Width - 28, 8);
-            this.Controls.Add(btnClose);
-
-            toggle = new ToggleSwitch();
-            toggle.Location = new Point(16, 50);
-            toggle.CheckedChanged += (s, e) =>
-            {
-                isTopmost = toggle.Checked;
-                SetClickTopmost(isTopmost);
-            };
-            this.Controls.Add(toggle);
-
-            Label lbl = new Label
-            {
-                Text = "窗口置顶",
-                ForeColor = Color.FromArgb(220, 220, 230),
-                AutoSize = true,
-                Location = new Point(72, 53),
-                Font = new Font("Microsoft YaHei UI", 9.5f)
-            };
-            this.Controls.Add(lbl);
-
-            Label hint = new Label
-            {
-                Text = "全局热键 F1",
-                ForeColor = Color.FromArgb(130, 130, 145),
-                AutoSize = true,
-                Location = new Point(16, 88),
-                Font = new Font("Microsoft YaHei UI", 8f)
-            };
-            this.Controls.Add(hint);
-
-            this.MouseDown += Panel_MouseDown;
-            this.MouseMove += Panel_MouseMove;
-            this.MouseUp += Panel_MouseUp;
+            this.ClientSize = new Size(cb.Width + 10, cb.Height + 6);
 
             tray = new NotifyIcon();
             tray.Icon = SystemIcons.Application;
-            tray.Text = "Clicker F1";
-            tray.Click += (s, e) => ShowFromTray();
+            tray.Text = "Clicker F1" + (hwnd == IntPtr.Zero ? " (独立)" : "");
             ContextMenu cm = new ContextMenu();
-            cm.MenuItems.Add("显示面板", (s, e) => ShowFromTray());
             cm.MenuItems.Add("退出", (s, e) => ExitAll());
             tray.ContextMenu = cm;
             tray.Visible = true;
 
-            System.Windows.Forms.Timer aliveTimer = new System.Windows.Forms.Timer();
+            aliveTimer = new System.Windows.Forms.Timer();
             aliveTimer.Interval = 1000;
             aliveTimer.Tick += (s, e) =>
             {
-                try { if (clickProc != null && clickProc.HasExited) ExitAll(); }
-                catch { }
+                try { if (clickProc != null && clickProc.HasExited) Application.Exit(); }
+                catch { Application.Exit(); }
             };
             aliveTimer.Start();
         }
 
-        Label CreateTopButton(string text, Action act)
+        protected override CreateParams CreateParams
         {
-            var lbl = new Label
+            get
             {
-                Text = text,
-                ForeColor = Color.FromArgb(180, 180, 190),
-                AutoSize = false,
-                Size = new Size(20, 20),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Cursor = Cursors.Hand,
-                Font = new Font("Microsoft YaHei UI", 9f)
-            };
-            lbl.MouseEnter += (s, e) => lbl.ForeColor = Color.White;
-            lbl.MouseLeave += (s, e) => lbl.ForeColor = Color.FromArgb(180, 180, 190);
-            lbl.MouseClick += (s, e) => act();
-            return lbl;
-        }
-
-        void RoundRegion(int radius)
-        {
-            int w = this.Width;
-            int h = this.Height;
-            using (GraphicsPath path = new GraphicsPath())
-            {
-                path.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
-                path.AddArc(w - radius * 2, 0, radius * 2, radius * 2, 270, 90);
-                path.AddArc(w - radius * 2, h - radius * 2, radius * 2, radius * 2, 0, 90);
-                path.AddArc(0, h - radius * 2, radius * 2, radius * 2, 90, 90);
-                path.CloseFigure();
-                this.Region = new Region(path);
+                CreateParams cp = base.CreateParams;
+                cp.Style |= WS_CHILD;
+                if (clickHwnd != IntPtr.Zero) cp.Parent = clickHwnd;
+                return cp;
             }
         }
 
-        void PositionByClickWindow()
+        protected override void OnHandleCreated(EventArgs e)
         {
-            if (clickHwnd == IntPtr.Zero || !IsWindow(clickHwnd)) return;
-            RECT rc;
-            if (GetWindowRect(clickHwnd, out rc))
+            base.OnHandleCreated(e);
+            if (clickHwnd != IntPtr.Zero)
             {
-                int x = rc.right + 10;
-                int y = rc.top + Math.Max(0, ((rc.bottom - rc.top) - this.Height) / 2);
-                var screen = Screen.FromHandle(clickHwnd).WorkingArea;
-                if (x + this.Width > screen.Right)
-                    x = rc.left - this.Width - 10;
-                if (x < screen.Left) x = screen.Left + 10;
-                if (y + this.Height > screen.Bottom) y = screen.Bottom - this.Height - 10;
+                RECT cr; GetClientRect(clickHwnd, out cr);
+                int x = cr.right - this.Width - 10;
+                int y = cr.bottom - this.Height - 8;
+                if (statusHwnd != IntPtr.Zero)
+                {
+                    RECT sr; GetWindowRect(statusHwnd, out sr);
+                    POINT sp = new POINT(); sp.x = sr.left; sp.y = sr.top;
+                    ScreenToClient(clickHwnd, ref sp);
+                    y = sp.y - this.Height - 4;
+                }
+                if (x < 4) x = 4;
+                if (y < 4) y = 4;
                 this.Location = new Point(x, y);
+                this.Visible = true;
             }
             else
             {
-                this.StartPosition = FormStartPosition.CenterScreen;
+                this.Location = new Point(Screen.PrimaryScreen.WorkingArea.Right - this.Width - 20, Screen.PrimaryScreen.WorkingArea.Bottom - this.Height - 20);
+                this.Visible = true;
             }
         }
 
@@ -376,103 +350,18 @@ class Launcher
         {
             if (clickHwnd != IntPtr.Zero && IsWindow(clickHwnd))
                 SetWindowPos(clickHwnd, top ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            SetWindowPos(this.Handle, top ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-
-        void Panel_MouseDown(object s, MouseEventArgs e)
-        {
-            if (e.Button == MouseButtons.Left)
-            {
-                dragging = true;
-                dragStart = new Point(e.X, e.Y);
-            }
-        }
-        void Panel_MouseMove(object s, MouseEventArgs e)
-        {
-            if (dragging)
-                this.Location = new Point(this.Left + e.X - dragStart.X, this.Top + e.Y - dragStart.Y);
-        }
-        void Panel_MouseUp(object s, MouseEventArgs e) { dragging = false; }
-
-        void HideToTray()
-        {
-            this.Hide();
-            tray.ShowBalloonTip(1000, "Clicker F1", "已最小化到托盘，点击图标恢复", ToolTipIcon.Info);
-        }
-
-        void ShowFromTray()
-        {
-            this.Show();
-            SetForegroundWindow(this.Handle);
         }
 
         void ExitAll()
         {
-            tray.Visible = false;
-            try { if (clickProc != null && !clickProc.HasExited) clickProc.Kill(); }
-            catch { }
-            this.Close();
+            try { if (clickProc != null && !clickProc.HasExited) clickProc.Kill(); } catch { }
+            Application.Exit();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             base.OnFormClosing(e);
             if (tray != null) tray.Dispose();
-        }
-    }
-
-    class ToggleSwitch : Control
-    {
-        bool _checked = false;
-        public bool Checked
-        {
-            get { return _checked; }
-            set { _checked = value; Invalidate(); if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty); }
-        }
-        public event EventHandler CheckedChanged;
-
-        public ToggleSwitch()
-        {
-            this.Size = new Size(44, 24);
-            this.Cursor = Cursors.Hand;
-            this.DoubleBuffered = true;
-            this.Click += (s, e) => { Checked = !Checked; };
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            int h = this.Height;
-            int w = this.Width;
-            int r = h - 4;
-
-            Color trackColor = _checked ? Color.FromArgb(0, 210, 106) : Color.FromArgb(70, 72, 82);
-            using (SolidBrush br = new SolidBrush(trackColor))
-            using (GraphicsPath path = RoundedRect(0, 0, w - 1, h - 1, h / 2))
-            {
-                g.FillPath(br, path);
-            }
-
-            int margin = 2;
-            int x = _checked ? w - r - margin : margin;
-            using (SolidBrush br = new SolidBrush(Color.White))
-            {
-                g.FillEllipse(br, x, margin, r, r);
-            }
-        }
-
-        GraphicsPath RoundedRect(int x, int y, int w, int h, int r)
-        {
-            GraphicsPath path = new GraphicsPath();
-            int d = r * 2;
-            path.AddArc(x, y, d, d, 180, 90);
-            path.AddArc(x + w - d, y, d, d, 270, 90);
-            path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
-            path.AddArc(x, y + h - d, d, d, 90, 90);
-            path.CloseFigure();
-            return path;
         }
     }
 }
