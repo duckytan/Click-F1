@@ -104,6 +104,34 @@ class Launcher
     const int WS_CLIPCHILDREN = 0x02000000;
     const int EM_GETLIMITTEXT = 0x00BA;
     const int EM_SETLIMITTEXT = 0x00C5;
+    const uint WM_SETFONT = 0x0030;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    struct LOGFONT
+    {
+        public int lfHeight;
+        public int lfWidth;
+        public int lfEscapement;
+        public int lfOrientation;
+        public int lfWeight;
+        public byte lfItalic;
+        public byte lfUnderline;
+        public byte lfStrikeOut;
+        public byte lfCharSet;
+        public byte lfOutPrecision;
+        public byte lfClipPrecision;
+        public byte lfQuality;
+        public byte lfPitchAndFamily;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string lfFaceName;
+    }
+
+    [DllImport("gdi32", CharSet = CharSet.Auto)]
+    static extern IntPtr CreateFontIndirect([In] ref LOGFONT lf);
+    [DllImport("gdi32")]
+    static extern bool DeleteObject(IntPtr hObject);
+    [DllImport("user32")]
+    static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
 
     struct RECT { public int left, top, right, bottom; }
 
@@ -284,6 +312,7 @@ class Launcher
         IntPtr clickHwnd;
         IntPtr statusHwnd;
         IntPtr checkHwnd = IntPtr.Zero;
+        IntPtr checkFont = IntPtr.Zero;
         NotifyIcon tray;
         System.Windows.Forms.Timer timer;
         bool lastChecked = false;
@@ -306,6 +335,20 @@ class Launcher
             timer.Interval = 200;
             timer.Tick += (s, e) => Tick();
             timer.Start();
+
+            checkFont = CreateCheckFont();
+        }
+
+        IntPtr CreateCheckFont()
+        {
+            LOGFONT lf = new LOGFONT();
+            lf.lfHeight = -12;            // ~9pt, 小号字体
+            lf.lfWeight = 400;            // 常规字重
+            lf.lfCharSet = 1;             // DEFAULT_CHARSET
+            lf.lfQuality = 5;             // CLEARTYPE_QUALITY 抗锯齿
+            lf.lfPitchAndFamily = 0;      // DEFAULT_PITCH | FF_DONTCARE
+            lf.lfFaceName = "Microsoft YaHei";
+            return CreateFontIndirect(ref lf);
         }
 
         void Tick()
@@ -335,10 +378,10 @@ class Launcher
 
         void GetCheckBoxPos(out int x, out int y, out int w, out int h)
         {
-            w = 70; h = 20;
+            w = 40; h = 16;
             RECT cr; GetClientRect(clickHwnd, out cr);
-            x = cr.right - w - 8;
-            y = 4;
+            x = cr.right - w - 6;
+            y = 3;
             if (x < 4) x = 4;
         }
 
@@ -350,13 +393,15 @@ class Launcher
 
             Log(string.Format("create checkbox at ({0},{1}) size {2}x{3}", x, y, w, h));
             IntPtr hInstance = GetModuleHandleW(null);
-            checkHwnd = CreateWindowExW(0, "BUTTON", "置顶",
-                                        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
+            checkHwnd = CreateWindowExW(0, "BUTTON", "Top",
+                                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
                                         x, y, w, h, clickHwnd, IntPtr.Zero, hInstance, IntPtr.Zero);
             int err = Marshal.GetLastWin32Error();
             Log(string.Format("checkbox hwnd={0:X} lastErr={1}", checkHwnd.ToInt64(), err));
             if (checkHwnd != IntPtr.Zero)
             {
+                if (checkFont != IntPtr.Zero)
+                    SendMessageW(checkHwnd, WM_SETFONT, checkFont, (IntPtr)1);
                 SetWindowPos(checkHwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
                 SendMessageW(checkHwnd, BM_SETCHECK, 0, 0);
                 lastChecked = false;
@@ -385,6 +430,7 @@ class Launcher
         {
             try { timer.Stop(); } catch { }
             if (checkHwnd != IntPtr.Zero && IsWindow(checkHwnd)) DestroyWindow(checkHwnd);
+            if (checkFont != IntPtr.Zero) { DeleteObject(checkFont); checkFont = IntPtr.Zero; }
             tray.Visible = false;
             tray.Dispose();
             Application.Exit();
