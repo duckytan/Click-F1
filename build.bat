@@ -10,9 +10,11 @@ if not exist "%CSC%" (
 
 echo [*] Compiling Clicker-F1.exe ...
 if exist Click.exe (
+    echo [*] Click.exe found - embedding it as a resource.
     "%CSC%" /nologo /target:winexe /out:Clicker-F1.exe Clicker-F1.cs /resource:Click.exe /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll
 ) else (
-    echo [!] 未找到 Click.exe，将编译为“不含内嵌 Click.exe”的版本（运行时会要求同目录放 Click.exe）。
+    echo [!] Click.exe NOT found - building WITHOUT embedded resource.
+    echo [!] You must keep Click.exe in the same folder as Clicker-F1.exe at runtime.
     "%CSC%" /nologo /target:winexe /out:Clicker-F1.exe Clicker-F1.cs /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll
 )
 if %ERRORLEVEL% neq 0 (
