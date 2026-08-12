@@ -153,6 +153,31 @@ class Launcher
         catch { }
     }
 
+    // 从内嵌资源中取出打包好的 Click.exe（build.bat 用 /resource:Click.exe 嵌入）
+    static byte[] LoadEmbeddedClick()
+    {
+        try
+        {
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            foreach (var name in asm.GetManifestResourceNames())
+            {
+                if (name.EndsWith("Click.exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    using (var s = asm.GetManifestResourceStream(name))
+                    {
+                        if (s == null) return null;
+                        byte[] buf = new byte[s.Length];
+                        int off = 0, n;
+                        while (off < buf.Length && (n = s.Read(buf, off, buf.Length - off)) > 0) off += n;
+                        return buf;
+                    }
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     static bool FindClickWindow(int pid, out IntPtr mainHwnd, out IntPtr statusHwnd)
     {
         mainHwnd = IntPtr.Zero;
@@ -197,7 +222,29 @@ class Launcher
         string exe = Path.Combine(baseDir, "Click.exe");
         if (!File.Exists(exe))
         {
-            Alert("Cannot find Click.exe. Keep this launcher in the same folder as Click.exe.");
+            // 优先用同目录下的 Click.exe；否则从内嵌资源中释放
+            byte[] data = LoadEmbeddedClick();
+            if (data != null)
+            {
+                try { File.WriteAllBytes(exe, data); }
+                catch
+                {
+                    // 同目录写入失败（只读/无权限），退而求其次放到临时目录
+                    try
+                    {
+                        string tmp = Path.Combine(Path.GetTempPath(), "ClickerF1");
+                        Directory.CreateDirectory(tmp);
+                        exe = Path.Combine(tmp, "Click.exe");
+                        if (!File.Exists(exe)) File.WriteAllBytes(exe, data);
+                    }
+                    catch { exe = null; }
+                }
+            }
+            else exe = null;
+        }
+        if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+        {
+            Alert("找不到 Click.exe，且本程序内也未嵌入该文件。\n请把 Click.exe 放到本程序同目录，或用 build.bat 重新编译以将其打包进 exe。");
             return;
         }
 
@@ -209,7 +256,7 @@ class Launcher
         Thread.Sleep(300);
 
         Process p;
-        try { p = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = baseDir }); }
+        try { p = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe) }); }
         catch (Exception ex) { Alert("Failed to start Click.exe: " + ex.Message); return; }
 
         int pid = p.Id;
